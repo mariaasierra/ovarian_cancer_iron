@@ -25,7 +25,7 @@ This is the processing pipeline used to analyse and generate figures from ovaria
 
 ### Import data
 ```{r import_data}
-scbecon.data<-Read10X(data.dir = "~/Mason Lab Dropbox/Maria Alejandra Sierra/Tito_paper_ovca")
+scbecon.data<-Read10X(data.dir = "path/to/folder/10Xdata")
 ```
 
 ### Subset low quality data
