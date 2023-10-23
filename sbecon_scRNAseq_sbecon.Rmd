@@ -1,0 +1,124 @@
+---
+title: "SBECON scRNA-Seq"
+author: "Maria A. Sierra"
+date: "1/14/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(installr)
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(msigdbr)
+library(fgsea)
+library(dplyr)
+library(tibble)
+library(escape)
+library(dittoSeq)
+library(EnrichmentBrowser)
+```
+
+## scRNA-seq pipeline mice dataset
+This is the processing pipeline used to analyse and generate figures from ovarian cancer mouse dataset
+
+### Import data
+```{r import_data}
+scbecon.data<-Read10X(data.dir = "~/Mason Lab Dropbox/Maria Alejandra Sierra/Tito_paper_ovca")
+```
+
+### Subset low quality data
+```{r quality_data}
+scbecon<-CreateSeuratObject(scbecon.data, project="scbecon", min.cells=3, min.features=200)
+scbecon@meta.data %>% head()
+length(colnames(scbecon)) # No. of cells
+scbecon[["percent.mt"]]<-PercentageFeatureSet(object=scbecon, pattern = "^mt-")
+scbecon_subset <- subset(x = scbecon, subset = nFeature_RNA > 200 & nFeature_RNA < 
+                           2500 & percent.mt < 5)
+length(colnames(scbecon_subset)) # No. of cells after subsetting low quality data
+```
+
+### Normalize data
+```{r norm}
+scbecon_subset_log <- NormalizeData(object = scbecon_subset, 
+                                    normalization.method = "LogNormalize", 
+                                    scale.factor = 10000)
+```
+### Identification of highly variable features (feature selection)
+```{r variable_features}
+scbecon_variable <- FindVariableFeatures(scbecon_subset_log, selection.method = "vst", nfeatures = 2000)
+#top10<-head(x=VariableFeatures(scbecon_variable),10)
+```
+
+### Scaling the data
+```{r scaling}
+all.genes<-rownames(scbecon_variable)
+scbecon_scaled<-ScaleData(scbecon_variable, features = all.genes)
+```
+
+### Perform linear dimensional reduction
+```{r linear_dim_reduc}
+scbecon_pca <- RunPCA(scbecon_scaled, features = VariableFeatures(object = scbecon_scaled))
+```
+
+### Cluster cells
+```{r clustering}
+scbecon_cluster<-FindNeighbors(scbecon_pca,dims = 1:20, nn.method = "rann")
+scbecon_cluster<-FindClusters(scbecon_cluster, resolution =0.25)
+head(x=Idents(scbecon_cluster),10)
+```
+
+### Non-linear dimensional reduction (UMAP/tSNE)
+```{r non_linear_dim_reduc}
+scbecon_umap<-RunUMAP(scbecon_cluster,dims = 1:10)
+DimPlot(scbecon_umap,reduction = "umap", label = T) +
+  theme_classic() +
+  theme(axis.text = element_text(size=15, color="black"), legend.position = "none",
+        axis.title = element_text(size=15, color="black")) 
+```
+
+### ssGSEA in all cluster groups <GO:BP>
+
+Enrichment on the RNA count data. This is computationally intensive and is highly dependent on the number of cells and the number of gene sets included.
+
+```{r ssgsea_by_allgroup_gobp}
+library(org.Mm.eg.db)
+mmu_gene_set_c5=getGenesets(org="mmu",db ="msigdb",gene.id.type = "SYMBOL",cache = TRUE,
+  return.type = c("GeneSetCollection"),cat = "C5" ) #subcat="GO:BP"
+
+gene_set_iron=mmu_gene_set_c5[grep("IRON_",names(mmu_gene_set_c5))]
+gene_set_iron=gene_set_iron[-grep("M26433",names(gene_set_iron))]
+gene_set_iron=gene_set_iron[-grep("_HP_",names(gene_set_iron))]
+
+ES.seurat <- enrichIt(obj = scbecon_umap, gene.sets = gene_set_iron)
+```
+
+### Merge with seurat object
+
+Add enrichment results to the Seurat object
+```{r add_to_Seurat}
+scbecon_umap_ES <- Seurat::AddMetaData(scbecon_umap, ES.seurat)
+```
+
+### Heatmap all cluster groups
+```{r heatmap_ssgsea_allclusters}
+my_levels <- c(0,3,6,9,1, 2, 4, 5,7,8,10)
+scbecon_umap_ES@meta.data$seurat_clusters <- factor(x = scbecon_umap_ES@meta.data$seurat_clusters, levels = my_levels)
+ggplotColours <- function(n = 6, h = c(0, 360) + 15){
+   if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
+   hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+ }
+ggplotColours(n = 11)
+
+dittoHeatmap(scbecon_umap_ES, genes = NULL, metas = names(ES.seurat), 
+             annot.by = "seurat_clusters", heatmap.colors = colorRampPalette(c("blue", "white", "red"))(50),
+             fontsize = 7,annot.colors = c("#F8766D" ,"#64B200","#00BADE","#EF67EB" ,"#DB8E00" ,"#AEA200" ,"#00BD5C" ,"#00C1A7" ,"#00A6FF","#B385FF" ,"#FF63B6"),
+             cluster_cols = F, breaks= brks)
+```
+
+
+
+
+
+
